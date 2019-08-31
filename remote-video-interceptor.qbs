@@ -17,6 +17,9 @@
   adopted we should look to LHLS (Low Latency HLS) that is based on HTTP2 to reduce overhead of
   establishing repeated HTTP/TCP connections.
 
+  PS: I am using some QStringRef to avoid allocations and copies, this is essentially usefull for the header
+  that we have to parse. It force us to keep a reference on the original QString.
+
   */
 
 Project

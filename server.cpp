@@ -7,9 +7,9 @@
 // @TODO
 // replace this harcoded url by a read on the console
 
-QString remote_url = "http://mnmedias.api.telequebec.tv/m3u8/29880.m3u8";
-//QString remote_url = "https://bitdash-a.akamaihd.net/content/MI201109210084_1/m3u8s/f08e80da-bf1d-4e3d-8899-f0f6155f6efa.m3u8";
-QString cdn_hostname = "mnmedias.api.telequebec.tv";
+//QString remote_url = "http://mnmedias.api.telequebec.tv/m3u8/29880.m3u8";
+QString remote_url = "http://qthttp.apple.com.edgesuite.net/1010qwoeiuryfg/sl.m3u8";
+QString cdn_hostname = "qthttp.apple.com.edgesuite.net";
 
 constexpr int https_port = 443;    // 443 is the default https port @TODO we may want something more customizable
 constexpr int http_port = 80;
@@ -49,8 +49,9 @@ Server::~Server()
 
 void Server::new_connection()
 {
-    QByteArray  received_request;
-    QByteArray  received_reply;
+    QString     received_request;
+    QString     received_reply_header;
+    QByteArray  received_reply_body;
     HTTP_Header client_request_header;
     HTTP_Header cdn_reply_header;
 
@@ -59,29 +60,37 @@ void Server::new_connection()
 
     m_cdn_socket->connectToHost(cdn_hostname, port_to_use); // @Warning we start to connect to the CDN as soon as possible to win a little amount of time (due to asynchronous operation)
 
-    received_request = read_entiere_header(socket, client_request_header);
+    read_everything(socket, received_request, client_request_header);
 
-    qInfo() << "[IN] https://localhost";
+    qInfo() << "[IN] https://localhost" + client_request_header.url;
     qDebug() << received_request;
 
     // @Warning we should fix the request before sending it to the CDN
     received_request.replace(QByteArray("Host: localhost"), QString("Host: " + cdn_hostname).toUtf8());
 
     // Forward the request in a synchronous way
-    m_cdn_socket->write(received_request);
-    m_cdn_socket->waitForBytesWritten(-1);
+    if (m_cdn_socket->waitForConnected(5 * 1000)) { // @TODO Do something better this is not robust. cf Qt doc : Note: This function may fail randomly on Windows. Consider using the event loop and the connected() signal if your software will run on Windows.
+        m_cdn_socket->write(received_request.toUtf8());
+        m_cdn_socket->waitForBytesWritten(-1);
 
-    // Wait for the reply of the CDN
-    received_reply = read_entiere_reply(m_cdn_socket, cdn_reply_header);
-    qInfo() << "[OUT] https://localhost";
-    qDebug() << received_reply;
+        // Wait for the reply of the CDN
+        read_everything(m_cdn_socket, received_reply_header, cdn_reply_header);
+        qInfo() << "[OUT] https://localhost" + client_request_header.url;
+        qDebug() << received_reply_header;
 
-    // Forward the reply to the client
-    m_cdn_socket->write(received_reply);
-    m_cdn_socket->waitForBytesWritten(-1);
+        // Forward the reply to the client
+        m_cdn_socket->write(received_reply_header.toUtf8()); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
+        m_cdn_socket->waitForBytesWritten(-1);
+    }
+    else {
+        qDebug() << "CDN connection failed!";
+    }
 
+    // @TODO @SpeedUp reopening sockets for everysingle request is really slow
     socket->close();
     delete socket;  // @Warning From the doc: The socket is created as a child of the server, which means that it is automatically deleted when the QTcpServer object is destroyed. It is still a good idea to delete the object explicitly when you are done with it, to avoid wasting memory.
+
+    m_cdn_socket->close();
 }
 
 void Server::cdn_found()
@@ -100,51 +109,41 @@ void Server::cdn_connection_error(QAbstractSocket::SocketError socketError)
 }
 
 // @TODO should be unit tested
-QByteArray Server::read_entiere_header(QTcpSocket* socket, Server::HTTP_Header& header)
+void Server::read_everything(QTcpSocket* socket, QString& request, Server::HTTP_Header& header)
 {
-    QByteArray  request;
-    int         from = 0;
+    int from = 0;
+    int header_size = 0;
+    constexpr int header_delimiter_length = sizeof("\r\n\r\n") - 1; // @Warning -1 because there is a '\0'
 
     socket->waitForReadyRead();
-    while (request.indexOf("\r\n\r\n", from) == -1)
+    while ((header_size = request.indexOf("\r\n\r\n", from)) == -1)
     {
-        from = std::max(0, request.size() - 2);  // @Warning - 2 be sure that CLRFCLRF can be found if truncated between two chunk of data, else we can get an infinite loop
+        from = std::max(0, request.size() - header_delimiter_length);  // @Warning - header_delimiter_length be sure that CLRFCLRF can be found if truncated between two chunk of data, else we can get an infinite loop
         request += socket->readAll();
     }
 
-    header = parse_http_header(request);
-    return request;
-}
+    header_size += header_delimiter_length;
 
-// @TODO should be unit tested
-QByteArray Server::read_entiere_reply(QTcpSocket *socket, Server::HTTP_Header& header)
-{
-    // @TODO @SpeedUp all of this can be optimized by a lot
-    // by using cached buffer to avoid allocation
-    QByteArray  header_data;
-    QByteArray  reply_data;
+    // @Warning we send the size as the buffer can be bigger and already containing some data of the content
+    header = parse_http_header(request, header_size);
 
-    header_data = read_entiere_header(socket, header);
-
-    while (reply_data.size() < header.content_length) {
-        reply_data += socket->readAll();
+    while (request.size() - header_size < header.content_length) {
+        request += socket->readAll();
     }
-
-    return header_data + reply_data;    // @TODO @SpeedUp Rewrite the API, returning a buffer like this makes copies, the client of this API should be able to send those 2 buffers individually and avoid this unecessary concatanation
 }
 
-Server::HTTP_Header Server::parse_http_header(const QString& http_header)
+Server::HTTP_Header Server::parse_http_header(const QString& http_header, int header_size)
 {
     // @TODO This can be much more improved
     // We can use a proper parser with a Tokenizer and then
     // build the AST
-    // A good parser will not do much allocations but use
-    // string views instead to avoid copies
+    // At least we use QStringRef here to avoid allocations and copies
 
     HTTP_Header         header;
+    QStringRef          header_raw_data = http_header.midRef(0, header_size);   // @Speed by doing this we will parse only what we want, nothing more
     QVector<QStringRef> slices;
 
-    slices = http_header.splitRef("\r\n");
+    slices = header_raw_data.split("\r\n");
     for (const QStringRef& slice : slices) {
         QVector<QStringRef> pair_variable_value;
 
@@ -157,6 +156,12 @@ Server::HTTP_Header Server::parse_http_header(const QString& http_header)
                 header.host = pair_variable_value[1].trimmed(); // @Warning we have to trim the string as it can have spaces before the value
             }
         }
+    }
+
+    slices = http_header.splitRef(' ');
+    if (slices.size() >= 2
+        && slices[0] == "GET") {
+        header.url = slices[1];
     }
 
     return header;

@@ -33,13 +33,13 @@ private:
         {
         }
 
+        QStringRef  url;
         QStringRef  host;
         int         content_length;
     };
 
-    QByteArray  read_entiere_header(QTcpSocket* socket, HTTP_Header& header); /// Synchronous method that wait completeness of the request
-    QByteArray  read_entiere_reply(QTcpSocket* socket, HTTP_Header& header);
-    HTTP_Header parse_http_header(const QString& http_header);
+    void read_everything(QTcpSocket* socket, QString& request, HTTP_Header& header); /// Synchronous method that wait completeness of the request
+    HTTP_Header parse_http_header(const QString& http_header, int header_size);
 
     QTcpServer* m_server;
     QTcpSocket* m_cdn_socket;
