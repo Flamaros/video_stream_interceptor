@@ -34,11 +34,11 @@ Server::Server(QObject* parent /* = nullptr */)
     // Initiate the connection with the cdn
     m_cdn_socket = new QTcpSocket();
 
-    connect(m_cdn_socket, SIGNAL(hostFound()), this, SLOT(cdn_found()));
+/*    connect(m_cdn_socket, SIGNAL(hostFound()), this, SLOT(cdn_found()));
     connect(m_cdn_socket, SIGNAL(connected()), this, SLOT(cdn_connected()));
     connect(m_cdn_socket, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(cdn_connection_error(QAbstractSocket::SocketError)));
 
-    m_cdn_socket->connectToHost(cdn_hostname, port_to_use);
+    m_cdn_socket->connectToHost(cdn_hostname, port_to_use);*/
 }
 
 Server::~Server()
@@ -51,11 +51,15 @@ void Server::new_connection()
 {
     QByteArray  received_request;
     QByteArray  received_reply;
+    HTTP_Header client_request_header;
+    HTTP_Header cdn_reply_header;
 
     // need to grab the socket
     QTcpSocket* socket = m_server->nextPendingConnection();
 
-    received_request = read_entiere_header(socket);
+    m_cdn_socket->connectToHost(cdn_hostname, port_to_use); // @Warning we start to connect to the CDN as soon as possible to win a little amount of time (due to asynchronous operation)
+
+    received_request = read_entiere_header(socket, client_request_header);
 
     qInfo() << "[IN] https://localhost";
     qDebug() << received_request;
@@ -68,7 +72,7 @@ void Server::new_connection()
     m_cdn_socket->waitForBytesWritten(-1);
 
     // Wait for the reply of the CDN
-    received_reply = read_entiere_reply(m_cdn_socket);
+    received_reply = read_entiere_reply(m_cdn_socket, cdn_reply_header);
     qInfo() << "[OUT] https://localhost";
     qDebug() << received_reply;
 
@@ -96,7 +100,7 @@ void Server::cdn_connection_error(QAbstractSocket::SocketError socketError)
 }
 
 // @TODO should be unit tested
-QByteArray Server::read_entiere_header(QTcpSocket* socket)
+QByteArray Server::read_entiere_header(QTcpSocket* socket, Server::HTTP_Header& header)
 {
     QByteArray  request;
     int         from = 0;
@@ -107,20 +111,20 @@ QByteArray Server::read_entiere_header(QTcpSocket* socket)
         from = std::max(0, request.size() - 2);  // @Warning - 2 be sure that CLRFCLRF can be found if truncated between two chunk of data, else we can get an infinite loop
         request += socket->readAll();
     }
+
+    header = parse_http_header(request);
     return request;
 }
 
 // @TODO should be unit tested
-QByteArray Server::read_entiere_reply(QTcpSocket *socket)
+QByteArray Server::read_entiere_reply(QTcpSocket *socket, Server::HTTP_Header& header)
 {
     // @TODO @SpeedUp all of this can be optimized by a lot
     // by using cached buffer to avoid allocation
     QByteArray  header_data;
     QByteArray  reply_data;
-    HTTP_Header header;
 
-    header_data = read_entiere_header(socket);
-    header = parse_http_header(header_data);
+    header_data = read_entiere_header(socket, header);
 
     while (reply_data.size() < header.content_length) {
         reply_data += socket->readAll();
@@ -149,6 +153,8 @@ Server::HTTP_Header Server::parse_http_header(const QString& http_header)
         {
             if (pair_variable_value[0] == "Content-Length") {
                 header.content_length = pair_variable_value[1].toInt(); // @TODO normally we should retrieve and check the ok parameter
+            } else if (pair_variable_value[0] == "Host") {
+                header.host = pair_variable_value[1].trimmed(); // @Warning we have to trim the string as it can have spaces before the value
             }
         }
     }
