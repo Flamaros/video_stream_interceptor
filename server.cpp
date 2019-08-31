@@ -58,11 +58,11 @@ void Server::new_connection()
     HTTP_Header cdn_reply_header;
 
     // need to grab the socket
-    QTcpSocket* socket = m_server->nextPendingConnection();
+    QTcpSocket* client_socket = m_server->nextPendingConnection();
 
     m_cdn_socket->connectToHost(cdn_hostname, port_to_use); // @Warning we start to connect to the CDN as soon as possible to win a little amount of time (due to asynchronous operation)
 
-    read_everything(socket, received_request, client_request_header);
+    read_everything(client_socket, received_request, client_request_header);
 
     std::cout << "[IN] https://localhost" << client_request_header.url.toString().toStdString().c_str() << std::endl;
     qDebug() << received_request;
@@ -81,16 +81,16 @@ void Server::new_connection()
         qDebug() << received_reply_header;
 
         // Forward the reply to the client
-        m_cdn_socket->write(received_reply_header); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
-        m_cdn_socket->waitForBytesWritten(-1);
+        client_socket->write(received_reply_header); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
+        client_socket->waitForBytesWritten(-1);
     }
     else {
         qDebug() << "CDN connection failed!";
     }
 
     // @TODO @SpeedUp reopening sockets for everysingle request is really slow
-    socket->close();
-    delete socket;  // @Warning From the doc: The socket is created as a child of the server, which means that it is automatically deleted when the QTcpServer object is destroyed. It is still a good idea to delete the object explicitly when you are done with it, to avoid wasting memory.
+    client_socket->close();
+    delete client_socket;  // @Warning From the doc: The socket is created as a child of the server, which means that it is automatically deleted when the QTcpServer object is destroyed. It is still a good idea to delete the object explicitly when you are done with it, to avoid wasting memory.
 
     m_cdn_socket->close();
 }
