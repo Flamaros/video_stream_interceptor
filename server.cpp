@@ -4,6 +4,8 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 
+#include <iostream>
+
 // @TODO
 // replace this harcoded url by a read on the console
 
@@ -49,8 +51,8 @@ Server::~Server()
 
 void Server::new_connection()
 {
-    QString     received_request;
-    QString     received_reply_header;
+    QByteArray  received_request;
+    QByteArray  received_reply_header;
     QByteArray  received_reply_body;
     HTTP_Header client_request_header;
     HTTP_Header cdn_reply_header;
@@ -62,7 +64,7 @@ void Server::new_connection()
 
     read_everything(socket, received_request, client_request_header);
 
-    qInfo() << "[IN] https://localhost" + client_request_header.url;
+    std::cout << "[IN] https://localhost" << client_request_header.url.toString().toStdString().c_str() << std::endl;
     qDebug() << received_request;
 
     // @Warning we should fix the request before sending it to the CDN
@@ -70,16 +72,16 @@ void Server::new_connection()
 
     // Forward the request in a synchronous way
     if (m_cdn_socket->waitForConnected(5 * 1000)) { // @TODO Do something better this is not robust. cf Qt doc : Note: This function may fail randomly on Windows. Consider using the event loop and the connected() signal if your software will run on Windows.
-        m_cdn_socket->write(received_request.toUtf8());
+        m_cdn_socket->write(received_request);
         m_cdn_socket->waitForBytesWritten(-1);
 
         // Wait for the reply of the CDN
         read_everything(m_cdn_socket, received_reply_header, cdn_reply_header);
-        qInfo() << "[OUT] https://localhost" + client_request_header.url;
+        std::cout << "[OUT] https://localhost" << client_request_header.url.toString().toStdString().c_str() << std::endl;
         qDebug() << received_reply_header;
 
         // Forward the reply to the client
-        m_cdn_socket->write(received_reply_header.toUtf8()); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
+        m_cdn_socket->write(received_reply_header); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
         m_cdn_socket->waitForBytesWritten(-1);
     }
     else {
@@ -109,7 +111,7 @@ void Server::cdn_connection_error(QAbstractSocket::SocketError socketError)
 }
 
 // @TODO should be unit tested
-void Server::read_everything(QTcpSocket* socket, QString& request, Server::HTTP_Header& header)
+void Server::read_everything(QTcpSocket* socket, QByteArray& request, Server::HTTP_Header& header)
 {
     int from = 0;
     int header_size = 0;
@@ -125,25 +127,25 @@ void Server::read_everything(QTcpSocket* socket, QString& request, Server::HTTP_
     header_size += header_delimiter_length;
 
     // @Warning we send the size as the buffer can be bigger and already containing some data of the content
-    header = parse_http_header(request, header_size);
+    parse_http_header(request, header_size, header);
 
     while (request.size() - header_size < header.content_length) {
         request += socket->readAll();
     }
 }
 
-Server::HTTP_Header Server::parse_http_header(const QString& http_header, int header_size)
+void Server::parse_http_header(const QByteArray& http_header, int header_size, Server::HTTP_Header& header)
 {
     // @TODO This can be much more improved
     // We can use a proper parser with a Tokenizer and then
     // build the AST
     // At least we use QStringRef here to avoid allocations and copies
 
-    HTTP_Header         header;
-    QStringRef          header_raw_data = http_header.midRef(0, header_size);   // @Speed by doing this we will parse only what we want, nothing more
     QVector<QStringRef> slices;
 
-    slices = header_raw_data.split("\r\n");
+    header.original_data = http_header.mid(0, header_size);   // @Speed by doing this we will parse only what we want, nothing more
+
+    slices = header.original_data.splitRef("\r\n");
     for (const QStringRef& slice : slices) {
         QVector<QStringRef> pair_variable_value;
 
@@ -158,11 +160,9 @@ Server::HTTP_Header Server::parse_http_header(const QString& http_header, int he
         }
     }
 
-    slices = http_header.splitRef(' ');
+    slices = header.original_data.splitRef(' ');
     if (slices.size() >= 2
         && slices[0] == "GET") {
         header.url = slices[1];
     }
-
-    return header;
 }

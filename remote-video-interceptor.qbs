@@ -19,6 +19,7 @@
 
   PS: I am using some QStringRef to avoid allocations and copies, this is essentially usefull for the header
   that we have to parse. It force us to keep a reference on the original QString.
+  Passing return value as ref parameters also avoid copies.
 
   */
 
