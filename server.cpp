@@ -52,8 +52,7 @@ void Server::new_connection()
     // need to grab the socket
     QTcpSocket* socket = m_server->nextPendingConnection();
 
-    socket->waitForReadyRead();
-    received_request = socket->readAll();
+    received_request = read_entiere_request(socket);
 
     qInfo() << "[IN] https://localhost";
     qDebug() << received_request;
@@ -95,4 +94,19 @@ void Server::cdn_connected()
 void Server::cdn_connection_error(QAbstractSocket::SocketError socketError)
 {
     qDebug() << "CDN connection error: " << socketError;
+}
+
+// @TODO should be unit tested
+QByteArray Server::read_entiere_request(QTcpSocket* socket)
+{
+    QByteArray  request;
+    int         from = 0;
+
+    socket->waitForReadyRead();
+    while (request.indexOf("\r\n\r\n", from) == -1)
+    {
+        from = request.size() - 2;  // @Warning - 2 be sure that CLRFCLRF can be found if truncated between two chunk of data, else we can get an infinite loop
+        request += socket->readAll();
+    }
+    return request;
 }

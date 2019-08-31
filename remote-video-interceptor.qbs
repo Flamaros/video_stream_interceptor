@@ -12,6 +12,11 @@
   pretty specific to OS. As far as I know on Windows we should want to use IOCompletion port
   with asynchronous mecanisms to be able to maximize the number of concurrent requests.
 
+  On the protocol side it depends of what we can do, if it is feasible a in house specific protocol
+  can be better for low latency constraints, but if we have to use something more standard and widely
+  adopted we should look to LHLS (Low Latency HLS) that is based on HTTP2 to reduce overhead of
+  establishing repeated HTTP/TCP connections.
+
   */
 
 Project
