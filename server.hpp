@@ -13,7 +13,7 @@ class Server : public QObject
     Q_OBJECT
 
 public:
-    explicit Server(QObject* parent = nullptr);
+    explicit Server(QString cnd_address, QObject* parent = nullptr);
     ~Server();
 
 signals:
@@ -39,9 +39,16 @@ private:
         int         content_length;
     };
 
+    enum class Content_Type
+    {
+        manifest,
+        segment,
+    };
+
     void read_everything(QTcpSocket* socket, QByteArray& request, HTTP_Header& header); /// Synchronous method that wait completeness of the request
     void parse_http_header(const QByteArray& http_header, int header_size, HTTP_Header& header);
 
+    QString     m_cdn_address;
     QTcpServer* m_server;
     QTcpSocket* m_cdn_socket;
 };

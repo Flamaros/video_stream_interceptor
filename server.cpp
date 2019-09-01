@@ -7,20 +7,14 @@
 
 #include <iostream>
 
-// @TODO
-// replace this harcoded url by a read on the console
-
-//QString remote_url = "http://mnmedias.api.telequebec.tv/m3u8/29880.m3u8";
-QString remote_url = "http://qthttp.apple.com.edgesuite.net/1010qwoeiuryfg/sl.m3u8";
-QString cdn_hostname = "qthttp.apple.com.edgesuite.net";
-
 constexpr int https_port = 443;    // 443 is the default https port @TODO we may want something more customizable
 constexpr int http_port = 80;
 
 constexpr int port_to_use = http_port;
 
-Server::Server(QObject* parent /* = nullptr */)
+Server::Server(QString cnd_address, QObject* parent /* = nullptr */)
     : QObject(parent)
+    , m_cdn_address(cnd_address)
 {
     m_server = new QTcpServer(this);
 
@@ -41,7 +35,7 @@ Server::Server(QObject* parent /* = nullptr */)
     connect(m_cdn_socket, SIGNAL(connected()), this, SLOT(cdn_connected()));
     connect(m_cdn_socket, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(cdn_connection_error(QAbstractSocket::SocketError)));
 
-    m_cdn_socket->connectToHost(cdn_hostname, port_to_use);*/
+    m_cdn_socket->connectToHost(m_cdn_address, port_to_use);*/
 }
 
 Server::~Server()
@@ -52,51 +46,60 @@ Server::~Server()
 
 void Server::new_connection()
 {
-    QByteArray  received_request;
-    QByteArray  received_reply_header;
-    QByteArray  received_reply_body;
-    HTTP_Header client_request_header;
-    HTTP_Header cdn_reply_header;
-    QTime       timer;
-    QString     content_type;
+    QByteArray      received_request_data;
+    QByteArray      received_reply_data;
+    QByteArray      received_reply_body;
+    HTTP_Header     client_request_header;
+    HTTP_Header     cdn_reply_header;
+    QTime           timer;
+    Content_Type    content_type;
+    QString         content_type_text;
 
     // need to grab the socket
     QTcpSocket* client_socket = m_server->nextPendingConnection();
 
-    m_cdn_socket->connectToHost(cdn_hostname, port_to_use); // @Warning we start to connect to the CDN as soon as possible to win a little amount of time (due to asynchronous operation)
+    m_cdn_socket->connectToHost(m_cdn_address, port_to_use); // @Warning we start to connect to the CDN as soon as possible to win a little amount of time (due to asynchronous operation)
 
-    read_everything(client_socket, received_request, client_request_header);
+    read_everything(client_socket, received_request_data, client_request_header);
 
-    if (client_request_header.url.endsWith(".m3u8")) {
-        content_type = "[MANIFEST]";
+    if (client_request_header.url.endsWith(".m3u8")) {  // @TODO Wait the day when reflection on enum will be available to generate the text instead of hard code it
+        content_type = Content_Type::manifest;
+        content_type_text = "[MANIFEST]";
     } else if (client_request_header.url.endsWith(".ts")) {
-        content_type = "[SEGMENT]";
+        content_type = Content_Type::segment;
+        content_type_text = "[SEGMENT]";
     }
 
-    std::cout << "\033[31m[IN]" << qPrintable(content_type) << "\033[0m https://localhost" << qPrintable(client_request_header.url.toString()) << std::endl;
-    qDebug() << QString(received_request);
+    if (content_type == Content_Type::manifest) {
+        std::cout << "\033[31m[TRACK SWITCH]\033[0m" << std::endl;
+    }
+
+    std::cout << "\033[31m[IN]" << qPrintable(content_type_text) << "\033[0m https://localhost" << qPrintable(client_request_header.url.toString()) << std::endl;
+    qDebug() << QString(received_request_data);
 
     // @Warning we should fix the request before sending it to the CDN
-    received_request.replace(QByteArray("Host: localhost"), QString("Host: " + cdn_hostname).toUtf8());
+    received_request_data.replace(QByteArray("Host: localhost"), QString("Host: " + m_cdn_address).toUtf8());
 
     // Forward the request in a synchronous way
     if (m_cdn_socket->waitForConnected(5 * 1000)) { // @TODO Do something better this is not robust. cf Qt doc : Note: This function may fail randomly on Windows. Consider using the event loop and the connected() signal if your software will run on Windows.
         timer.start();
 
-        m_cdn_socket->write(received_request);
+        m_cdn_socket->write(received_request_data);
         m_cdn_socket->waitForBytesWritten(-1);
 
         // Wait for the reply of the CDN
-        read_everything(m_cdn_socket, received_reply_header, cdn_reply_header);
+        read_everything(m_cdn_socket, received_reply_data, cdn_reply_header);
 
-        std::cout << "\033[31m[OUT]" << qPrintable(content_type) << "\033[0m https://localhost" << qPrintable(client_request_header.url.toString()) << " (" << timer.elapsed() << "ms)" << std::endl;
-        qDebug() << QString(received_reply_header);
+        std::cout << "\033[31m[OUT]" << qPrintable(content_type_text) << "\033[0m https://localhost" << qPrintable(client_request_header.url.toString()) << " (" << timer.elapsed() << "ms)" << std::endl;
+        qDebug() << QString(received_reply_data);
 
         // @Warning we should fix absolute urls that can be in the response
-        received_reply_header.replace(cdn_hostname, "localhost");
+        if (content_type == Content_Type::manifest) {
+            received_reply_data.replace(m_cdn_address, "localhost");
+        }
 
         // Forward the reply to the client
-        client_socket->write(received_reply_header); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
+        client_socket->write(received_reply_data); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
         client_socket->waitForBytesWritten(-1);
     }
     else {
@@ -135,7 +138,7 @@ void Server::read_everything(QTcpSocket* socket, QByteArray& request, Server::HT
     while ((header_size = request.indexOf("\r\n\r\n", from)) == -1)
     {
         from = std::max(0, request.size() - header_delimiter_length);  // @Warning - header_delimiter_length be sure that CLRFCLRF can be found if truncated between two chunk of data, else we can get an infinite loop
-        socket->waitForReadyRead();
+        socket->waitForReadyRead(-1);
         request += socket->readAll();
     }
 
@@ -145,7 +148,7 @@ void Server::read_everything(QTcpSocket* socket, QByteArray& request, Server::HT
     parse_http_header(request, header_size, header);
 
     while (request.size() - header_size < header.content_length) {
-        socket->waitForReadyRead();
+        socket->waitForReadyRead(-1);
         request += socket->readAll();
     }
 }
