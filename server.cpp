@@ -3,6 +3,7 @@
 #include <QSslSocket>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTime>
 
 #include <iostream>
 
@@ -56,6 +57,7 @@ void Server::new_connection()
     QByteArray  received_reply_body;
     HTTP_Header client_request_header;
     HTTP_Header cdn_reply_header;
+    QTime       timer;
 
     // need to grab the socket
     QTcpSocket* client_socket = m_server->nextPendingConnection();
@@ -64,7 +66,7 @@ void Server::new_connection()
 
     read_everything(client_socket, received_request, client_request_header);
 
-    std::cout << "[IN] https://localhost" << client_request_header.url.toString().toStdString().c_str() << std::endl;
+    std::cout << "\033[31m[IN]\033[0m https://localhost" << client_request_header.url.toString().toStdString().c_str() << std::endl;
     qDebug() << received_request;
 
     // @Warning we should fix the request before sending it to the CDN
@@ -72,12 +74,15 @@ void Server::new_connection()
 
     // Forward the request in a synchronous way
     if (m_cdn_socket->waitForConnected(5 * 1000)) { // @TODO Do something better this is not robust. cf Qt doc : Note: This function may fail randomly on Windows. Consider using the event loop and the connected() signal if your software will run on Windows.
+        timer.start();
+
         m_cdn_socket->write(received_request);
         m_cdn_socket->waitForBytesWritten(-1);
 
         // Wait for the reply of the CDN
         read_everything(m_cdn_socket, received_reply_header, cdn_reply_header);
-        std::cout << "[OUT] https://localhost" << client_request_header.url.toString().toStdString().c_str() << std::endl;
+
+        std::cout << "\033[31m[OUT]\033[0m https://localhost" << client_request_header.url.toString().toStdString().c_str() << " (" << timer.elapsed() << "ms)" << std::endl;
         qDebug() << received_reply_header;
 
         // Forward the reply to the client

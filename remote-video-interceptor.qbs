@@ -23,6 +23,14 @@
 
   */
 
+/*
+  @Warning logs use VT100 escape sequences to add colors
+  To enable the VT100 emulation under Windows 10 take a look to:
+  https://stackoverflow.com/questions/16755142/how-to-make-win32-console-recognize-ansi-vt100-escape-sequences
+  The solution of BrainSlugs83 is working:
+  "FYI, in latest Windows 10, you can enable ANSI in conhost via the following reghack -- in HKCU\Console create a DWORD named VirtualTerminalLevel and set it to 0x1; then restart cmd.exe"
+  */
+
 Project
 {
     name: "remote-video-interceptor"
@@ -46,5 +54,12 @@ Project
 
         Depends {name: "Qt.core" }
         Depends {name: "Qt.network" }
+
+        Properties {
+            condition: qbs.buildVariant == "release"
+            cpp.defines: [
+                "QT_NO_DEBUG_OUTPUT",   // To disable qDebug() logger
+            ]
+        }
     }
 }
