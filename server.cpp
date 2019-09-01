@@ -58,6 +58,7 @@ void Server::new_connection()
     HTTP_Header client_request_header;
     HTTP_Header cdn_reply_header;
     QTime       timer;
+    QString     content_type;
 
     // need to grab the socket
     QTcpSocket* client_socket = m_server->nextPendingConnection();
@@ -66,8 +67,14 @@ void Server::new_connection()
 
     read_everything(client_socket, received_request, client_request_header);
 
-    std::cout << "\033[31m[IN]\033[0m https://localhost" << client_request_header.url.toString().toStdString().c_str() << std::endl;
-    qDebug() << received_request;
+    if (client_request_header.url.endsWith(".m3u8")) {
+        content_type = "[MANIFEST]";
+    } else if (client_request_header.url.endsWith(".ts")) {
+        content_type = "[SEGMENT]";
+    }
+
+    std::cout << "\033[31m[IN]" << qPrintable(content_type) << "\033[0m https://localhost" << qPrintable(client_request_header.url.toString()) << std::endl;
+    qDebug() << QString(received_request);
 
     // @Warning we should fix the request before sending it to the CDN
     received_request.replace(QByteArray("Host: localhost"), QString("Host: " + cdn_hostname).toUtf8());
@@ -82,8 +89,11 @@ void Server::new_connection()
         // Wait for the reply of the CDN
         read_everything(m_cdn_socket, received_reply_header, cdn_reply_header);
 
-        std::cout << "\033[31m[OUT]\033[0m https://localhost" << client_request_header.url.toString().toStdString().c_str() << " (" << timer.elapsed() << "ms)" << std::endl;
-        qDebug() << received_reply_header;
+        std::cout << "\033[31m[OUT]" << qPrintable(content_type) << "\033[0m https://localhost" << qPrintable(client_request_header.url.toString()) << " (" << timer.elapsed() << "ms)" << std::endl;
+        qDebug() << QString(received_reply_header);
+
+        // @Warning we should fix absolute urls that can be in the response
+        received_reply_header.replace(cdn_hostname, "localhost");
 
         // Forward the reply to the client
         client_socket->write(received_reply_header); // @TODO @SpeedUp we have to check how this is implemented, does Qt do some intermediate copies before writting on the OS socket?
@@ -122,10 +132,10 @@ void Server::read_everything(QTcpSocket* socket, QByteArray& request, Server::HT
     int header_size = 0;
     constexpr int header_delimiter_length = sizeof("\r\n\r\n") - 1; // @Warning -1 because there is a '\0'
 
-    socket->waitForReadyRead();
     while ((header_size = request.indexOf("\r\n\r\n", from)) == -1)
     {
         from = std::max(0, request.size() - header_delimiter_length);  // @Warning - header_delimiter_length be sure that CLRFCLRF can be found if truncated between two chunk of data, else we can get an infinite loop
+        socket->waitForReadyRead();
         request += socket->readAll();
     }
 
@@ -135,6 +145,7 @@ void Server::read_everything(QTcpSocket* socket, QByteArray& request, Server::HT
     parse_http_header(request, header_size, header);
 
     while (request.size() - header_size < header.content_length) {
+        socket->waitForReadyRead();
         request += socket->readAll();
     }
 }
